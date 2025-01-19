@@ -1,7 +1,5 @@
 package ru.test.server;
 
-import kafka.server.ApiRequestHandler;
-
 import java.util.concurrent.CountDownLatch;
 
 public class KafkaRequestHandler implements Runnable {
@@ -48,11 +46,5 @@ public class KafkaRequestHandler implements Runnable {
         requestLocal.close();
         threadRequestChannel.remove();
         shutdownComplete.countDown();
-    }
-
-    public interface ApiRequestHandler {
-        void handle(kafka.network.RequestChannel.Request request, RequestLocal requestLocal);
-
-        void tryCompleteActions();
     }
 }

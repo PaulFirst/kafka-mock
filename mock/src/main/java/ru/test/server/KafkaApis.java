@@ -1,6 +1,5 @@
 package ru.test.server;
 
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import kafka.network.RequestChannel;
