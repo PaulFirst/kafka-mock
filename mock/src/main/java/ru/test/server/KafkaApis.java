@@ -20,8 +20,12 @@ import scala.reflect.ClassTag;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.stream.Stream;
+
+import static org.apache.kafka.common.requests.JoinGroupRequest.UNKNOWN_MEMBER_ID;
 
 public class KafkaApis implements ApiRequestHandler {
 
@@ -35,12 +39,18 @@ public class KafkaApis implements ApiRequestHandler {
 
     @Override
     public void handle(RequestChannel.Request request, kafka.server.RequestLocal requestLocal) {
+        System.out.println(request.header().apiKey());
         try {
             switch (request.header().apiKey()) {
                 case API_VERSIONS -> handleApiVersionsRequest(request);
                 case METADATA -> handleTopicMetadataRequest(request);
                 case INIT_PRODUCER_ID -> handleInitProducerIdRequest(request);
                 case PRODUCE -> handleProduceRequest(request);
+                case FIND_COORDINATOR -> handleFindCoordinatorRequest(request);
+                case JOIN_GROUP -> handleJoinGroupRequest(request);
+                case FETCH -> handleFetchRequest(request);
+                case HEARTBEAT -> handleHeartbeatRequest(request);
+                case SYNC_GROUP -> handleSyncGroupRequest(request);
 
             }
         } catch (Exception e) {
@@ -54,6 +64,7 @@ public class KafkaApis implements ApiRequestHandler {
     }
 
     private void handleApiVersionsRequest(kafka.network.RequestChannel.Request request) {
+        System.out.println("API Request connectionId = " + request.context().connectionId);
         ApiVersionsRequest apiVersionRequest = request.body(ClassTag.apply(ApiVersionsRequest.class), null);
         if (apiVersionRequest.hasUnsupportedRequestVersion()) {
 
@@ -95,6 +106,7 @@ public class KafkaApis implements ApiRequestHandler {
     }
 
     private void handleTopicMetadataRequest(kafka.network.RequestChannel.Request request) {
+        System.out.println("Meta Request connectionId = " + request.context().connectionId);
         MetadataRequest metadataRequest = request.body(ClassTag.apply(MetadataRequest.class), null);
         short requestVersion = request.header().apiVersion();
 
@@ -108,7 +120,7 @@ public class KafkaApis implements ApiRequestHandler {
         MetadataResponseData.MetadataResponseTopic topic = new MetadataResponseData.MetadataResponseTopic();
         topic.setErrorCode((short) 0);
         topic.setTopicId(Uuid.METADATA_TOPIC_ID);
-        topic.setName("test-topic");
+        topic.setName("test-topic-meta");
         topic.setIsInternal(false);
         topic.setTopicAuthorizedOperations(Integer.MIN_VALUE);
         topic.setPartitions(List.of(partition));
@@ -116,7 +128,7 @@ public class KafkaApis implements ApiRequestHandler {
         MetadataResponse metadataResponse = MetadataResponse.prepareResponse(
                 requestVersion,
                 0,
-                List.of(new Node(1, "127.0.0.1", 9092)),
+                List.of(new Node(77, "127.0.0.1", 9092)),
                 "1",
                 0,
                 List.of(topic),
@@ -128,6 +140,7 @@ public class KafkaApis implements ApiRequestHandler {
     }
 
     private void handleInitProducerIdRequest(kafka.network.RequestChannel.Request request) {
+        System.out.println("Init Producer Request connectionId = " + request.context().connectionId);
         InitProducerIdRequest initProducerIdRequest = request.body(ClassTag.apply(InitProducerIdRequest.class), null);
         String transactionalId = initProducerIdRequest.data().transactionalId();
 
@@ -143,6 +156,8 @@ public class KafkaApis implements ApiRequestHandler {
     }
 
     private void handleProduceRequest(kafka.network.RequestChannel.Request request) {
+        System.out.println("Produce Request connectionId = " + request.context().connectionId);
+
         ProduceRequest produceRequest = request.body(ClassTag.apply(ProduceRequest.class), null);
         short acks = produceRequest.acks();
         ProduceRequestData.TopicProduceDataCollection topicProduceData = produceRequest.data().topicData();
@@ -179,4 +194,75 @@ public class KafkaApis implements ApiRequestHandler {
         System.out.println("Полученное сообщение: " + s);
 
     }
+
+    private void handleFindCoordinatorRequest(kafka.network.RequestChannel.Request request) {
+        System.out.println("FindCoordinator Request connectionId = " + request.context().connectionId);
+
+        short version = request.header().apiVersion();
+
+        handleFindCoordinatorRequestV4AndAbove(request);
+    }
+
+    private void handleFindCoordinatorRequestV4AndAbove(kafka.network.RequestChannel.Request request) {
+        FindCoordinatorRequest findCoordinatorRequest = request.body(ClassTag.apply(FindCoordinatorRequest.class), null);
+
+        List<FindCoordinatorResponseData.Coordinator> coordinators = findCoordinatorRequest.data().coordinatorKeys().stream().map(key -> {
+            byte b = findCoordinatorRequest.data().keyType();
+            FindCoordinatorResponseData.Coordinator coordinator = new FindCoordinatorResponseData.Coordinator();
+            coordinator.setErrorCode((short)0);
+            coordinator.setKey(key);
+            coordinator.setHost("127.0.0.1");
+            coordinator.setNodeId(Integer.MAX_VALUE - 77);
+            coordinator.setPort(9092);
+            return coordinator;
+        }).toList();
+
+
+        FindCoordinatorResponseData findCoordinatorResponseData = new FindCoordinatorResponseData()
+                .setCoordinators(coordinators);
+        FindCoordinatorResponse findCoordinatorResponse = new FindCoordinatorResponse(findCoordinatorResponseData);
+
+        requestChannel.sendResponse(request, findCoordinatorResponse, Option.empty());
+    }
+
+    private void handleJoinGroupRequest(RequestChannel.Request request) {
+        System.out.println("JoinGroup Request connectionId = " + request.context().connectionId);
+
+        short version = request.context().apiVersion();
+        JoinGroupRequest joinGroupRequest = request.body(ClassTag.apply(JoinGroupRequest.class), null);
+        JoinGroupRequestData data = joinGroupRequest.data();
+        boolean isUnknownMember = data.memberId().equals(UNKNOWN_MEMBER_ID);
+        data.memberId();
+        data.groupId();
+
+        JoinGroupResponseData joinGroupResponseData = new JoinGroupResponseData();
+//        joinGroupResponseData.setMembers(Collections.emptyList());
+//        joinGroupResponseData.setMemberId(data.memberId());
+        joinGroupResponseData.setProtocolName("range");
+//        joinGroupResponseData.setProtocolType(null);
+//        joinGroupResponseData.setLeader(null);
+//        joinGroupResponseData.setSkipAssignment(false);
+
+        JoinGroupResponse joinGroupResponse = new JoinGroupResponse(joinGroupResponseData, version);
+
+        requestChannel.sendResponse(request, joinGroupResponse, Option.empty());
+    }
+
+    private void handleFetchRequest(RequestChannel.Request request) {
+
+    }
+
+    private void handleHeartbeatRequest(RequestChannel.Request request) {
+
+    }
+
+    private void handleSyncGroupRequest(RequestChannel.Request request) {
+
+        SyncGroupResponseData syncGroupResponseData = new SyncGroupResponseData();
+        syncGroupResponseData.setAssignment("pepe".getBytes(StandardCharsets.UTF_8));
+
+        SyncGroupResponse syncGroupResponse = new SyncGroupResponse(syncGroupResponseData);
+        requestChannel.sendResponse(request, syncGroupResponse, Option.empty());
+    }
+
 }

@@ -11,6 +11,7 @@
     <modules>
         <module>producer</module>
         <module>mock</module>
+        <module>consumer</module>
     </modules>
 
     <parent>
