@@ -9,13 +9,17 @@ import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.*;
+import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.LazyDownConversionRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.RecordVersion;
 import org.apache.kafka.common.requests.*;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import scala.Option;
 import scala.reflect.ClassTag;
@@ -23,9 +27,7 @@ import scala.reflect.ClassTag;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
+import java.util.*;
 
 import static org.apache.kafka.common.requests.JoinGroupRequest.UNKNOWN_MEMBER_ID;
 
@@ -50,10 +52,10 @@ public class KafkaApis implements ApiRequestHandler {
                 case PRODUCE -> handleProduceRequest(request);
                 case FIND_COORDINATOR -> handleFindCoordinatorRequest(request);
                 case JOIN_GROUP -> handleJoinGroupRequest(request);
-                case FETCH -> handleFetchRequest(request);
                 case HEARTBEAT -> handleHeartbeatRequest(request);
                 case SYNC_GROUP -> handleSyncGroupRequest(request);
                 case OFFSET_FETCH -> handleOffsetFetchRequest(request);
+                case FETCH -> handleFetchRequest(request);
 
             }
         } catch (Exception e) {
@@ -122,7 +124,7 @@ public class KafkaApis implements ApiRequestHandler {
 
         MetadataResponseData.MetadataResponseTopic topic = new MetadataResponseData.MetadataResponseTopic();
         topic.setErrorCode((short) 0);
-        topic.setTopicId(Uuid.METADATA_TOPIC_ID);
+        topic.setTopicId(Uuid.fromString("8yXyiGdERAiJw0Ho16h6cw"));
         topic.setName("test-topic");
         topic.setIsInternal(false);
         topic.setTopicAuthorizedOperations(Integer.MIN_VALUE);
@@ -166,6 +168,8 @@ public class KafkaApis implements ApiRequestHandler {
         ProduceRequestData.TopicProduceDataCollection topicProduceData = produceRequest.data().topicData();
         ProduceRequestData.PartitionProduceData first = topicProduceData.stream().findFirst().get().partitionData().stream().findFirst().get();
         MemoryRecords records = (MemoryRecords) first.records();
+        ProduceRequest.validateRecords(request.header().apiVersion(), records);
+
         Iterable<Record> records1 = records.records();
         Record next = records1.iterator().next();
         ByteBuffer value = next.value();
@@ -260,10 +264,6 @@ public class KafkaApis implements ApiRequestHandler {
         requestChannel.sendResponse(request, joinGroupResponse, Option.empty());
     }
 
-    private void handleFetchRequest(RequestChannel.Request request) {
-
-    }
-
     private void handleHeartbeatRequest(RequestChannel.Request request) {
 
         HeartbeatResponseData heartbeatResponseData = new HeartbeatResponseData();
@@ -295,7 +295,7 @@ public class KafkaApis implements ApiRequestHandler {
         partitions.setMetadata("");
         partitions.setErrorCode((short) 0);
         partitions.setPartitionIndex(0);
-        partitions.setCommittedOffset(3);
+        partitions.setCommittedOffset(0);
 
         OffsetFetchResponseData.OffsetFetchResponseTopics topics = new OffsetFetchResponseData.OffsetFetchResponseTopics();
         topics.setName("test-topic");
@@ -310,6 +310,39 @@ public class KafkaApis implements ApiRequestHandler {
 
         System.out.println("Обработан apikey: OFFSET_FETCH");
         requestChannel.sendResponse(request, offsetFetchResponse, Option.empty());
+    }
+
+    private void handleFetchRequest(RequestChannel.Request request) {
+
+        TopicIdPartition topicIdPartition = new TopicIdPartition(Uuid.fromString("8yXyiGdERAiJw0Ho16h6cw"),  new TopicPartition("test-topic", 0));
+//        TopicIdPartition topicIdPartition1 = new TopicPartition(Uuid.randomUuid(), new Pa)
+        FetchResponseData.PartitionData partitionData = new FetchResponseData.PartitionData();
+        partitionData.setPartitionIndex(0);
+        partitionData.setErrorCode((short) 0);
+//        partitionData.setHighWatermark()
+        partitionData.setLastStableOffset(0);
+        partitionData.setLogStartOffset(0);
+//        partitionData.setAbortedTransactions()
+
+        String a = "jello";
+        MemoryRecords memoryRecords = MemoryRecords.readableRecords(ByteBuffer.wrap(a.getBytes(StandardCharsets.UTF_8)));
+        LazyDownConversionRecords lazyDownConversionRecords = new LazyDownConversionRecords(topicIdPartition.topicPartition(), memoryRecords, (byte) 1, 5L, Time.SYSTEM);
+        partitionData.setRecords(lazyDownConversionRecords);
+//        partitionData.setPreferredReadReplica()
+//        partitionData.setDivergingEpoch()
+
+        FetchResponseData.LeaderIdAndEpoch leaderIdAndEpoch = new FetchResponseData.LeaderIdAndEpoch();
+        leaderIdAndEpoch.setLeaderEpoch(0);
+        leaderIdAndEpoch.setLeaderId(77);
+        partitionData.setCurrentLeader(leaderIdAndEpoch);
+
+        LinkedHashMap<TopicIdPartition, FetchResponseData.PartitionData> topicIdPartitionPartitionDataLinkedHashMap = new LinkedHashMap<>();
+        topicIdPartitionPartitionDataLinkedHashMap.put(topicIdPartition, partitionData);
+
+
+        FetchResponse fetchResponse1 = FetchResponse.of(Errors.NONE, 0, 0, topicIdPartitionPartitionDataLinkedHashMap, List.<Node>of());
+
+        requestChannel.sendResponse(request, fetchResponse1, Option.empty());
     }
 
 }
