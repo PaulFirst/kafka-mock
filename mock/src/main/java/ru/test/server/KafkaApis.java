@@ -6,7 +6,10 @@ import kafka.network.RequestChannel;
 import kafka.server.ApiRequestHandler;
 import kafka.server.BrokerFeatures;
 import org.apache.kafka.clients.NodeApiVersions;
+import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
+import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.*;
 import org.apache.kafka.common.record.MemoryRecords;
@@ -19,11 +22,10 @@ import scala.reflect.ClassTag;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.stream.Stream;
 
 import static org.apache.kafka.common.requests.JoinGroupRequest.UNKNOWN_MEMBER_ID;
 
@@ -39,7 +41,7 @@ public class KafkaApis implements ApiRequestHandler {
 
     @Override
     public void handle(RequestChannel.Request request, kafka.server.RequestLocal requestLocal) {
-        System.out.println(request.header().apiKey());
+        System.out.println("[" + LocalDateTime.now() + "] - " + request.header().apiKey());
         try {
             switch (request.header().apiKey()) {
                 case API_VERSIONS -> handleApiVersionsRequest(request);
@@ -51,6 +53,7 @@ public class KafkaApis implements ApiRequestHandler {
                 case FETCH -> handleFetchRequest(request);
                 case HEARTBEAT -> handleHeartbeatRequest(request);
                 case SYNC_GROUP -> handleSyncGroupRequest(request);
+                case OFFSET_FETCH -> handleOffsetFetchRequest(request);
 
             }
         } catch (Exception e) {
@@ -112,7 +115,7 @@ public class KafkaApis implements ApiRequestHandler {
 
         MetadataResponseData.MetadataResponsePartition partition = new MetadataResponseData.MetadataResponsePartition();
         partition.setErrorCode((short)0);
-        partition.setLeaderId(1);
+        partition.setLeaderId(77);
         partition.setLeaderEpoch(8);
         partition.setReplicaNodes(List.of(1));
         partition.setIsrNodes(List.of(1));
@@ -120,7 +123,7 @@ public class KafkaApis implements ApiRequestHandler {
         MetadataResponseData.MetadataResponseTopic topic = new MetadataResponseData.MetadataResponseTopic();
         topic.setErrorCode((short) 0);
         topic.setTopicId(Uuid.METADATA_TOPIC_ID);
-        topic.setName("test-topic-meta");
+        topic.setName("test-topic");
         topic.setIsInternal(false);
         topic.setTopicAuthorizedOperations(Integer.MIN_VALUE);
         topic.setPartitions(List.of(partition));
@@ -222,6 +225,7 @@ public class KafkaApis implements ApiRequestHandler {
                 .setCoordinators(coordinators);
         FindCoordinatorResponse findCoordinatorResponse = new FindCoordinatorResponse(findCoordinatorResponseData);
 
+        System.out.println("Обработан apikey: FIND_COORDINATOR");
         requestChannel.sendResponse(request, findCoordinatorResponse, Option.empty());
     }
 
@@ -235,16 +239,24 @@ public class KafkaApis implements ApiRequestHandler {
         data.memberId();
         data.groupId();
 
+        ConsumerPartitionAssignor.Subscription subscription = new ConsumerPartitionAssignor.Subscription(List.of("test-topic"));
+        ByteBuffer metadata = ConsumerProtocol.serializeSubscription(subscription);
+
+        JoinGroupResponseData.JoinGroupResponseMember member = new JoinGroupResponseData.JoinGroupResponseMember();
+        member.setMemberId("my-member");
+        member.setMetadata(Utils.toArray(metadata));
+
         JoinGroupResponseData joinGroupResponseData = new JoinGroupResponseData();
-//        joinGroupResponseData.setMembers(Collections.emptyList());
-//        joinGroupResponseData.setMemberId(data.memberId());
+        joinGroupResponseData.setMembers(List.of(member));
+        joinGroupResponseData.setMemberId("my-member");
         joinGroupResponseData.setProtocolName("range");
 //        joinGroupResponseData.setProtocolType(null);
-//        joinGroupResponseData.setLeader(null);
+        joinGroupResponseData.setLeader("my-member");
 //        joinGroupResponseData.setSkipAssignment(false);
 
         JoinGroupResponse joinGroupResponse = new JoinGroupResponse(joinGroupResponseData, version);
 
+        System.out.println("Обработан apikey: JOIN_GROUP");
         requestChannel.sendResponse(request, joinGroupResponse, Option.empty());
     }
 
@@ -254,15 +266,50 @@ public class KafkaApis implements ApiRequestHandler {
 
     private void handleHeartbeatRequest(RequestChannel.Request request) {
 
+        HeartbeatResponseData heartbeatResponseData = new HeartbeatResponseData();
+
+        System.out.println("Обработан apikey: HEARTBEAT");
+        requestChannel.sendResponse(request, new HeartbeatResponse(heartbeatResponseData), Option.empty());
     }
 
     private void handleSyncGroupRequest(RequestChannel.Request request) {
 
+        TopicPartition topicPartition = new TopicPartition("test-topic", 0);
+        ConsumerPartitionAssignor.Assignment assignment = new ConsumerPartitionAssignor.Assignment(List.of(topicPartition));
+
         SyncGroupResponseData syncGroupResponseData = new SyncGroupResponseData();
-        syncGroupResponseData.setAssignment("pepe".getBytes(StandardCharsets.UTF_8));
+        syncGroupResponseData.setAssignment(Utils.toArray(ConsumerProtocol.serializeAssignment(assignment)));
 
         SyncGroupResponse syncGroupResponse = new SyncGroupResponse(syncGroupResponseData);
+
+        System.out.println("Обработан apikey: SYNC_GROUP");
         requestChannel.sendResponse(request, syncGroupResponse, Option.empty());
+    }
+
+    private void handleOffsetFetchRequest(RequestChannel.Request request) {
+        handleOffsetFetchRequestFromCoordinator(request);
+    }
+
+    private void handleOffsetFetchRequestFromCoordinator(RequestChannel.Request request) {
+        OffsetFetchResponseData.OffsetFetchResponsePartitions partitions = new OffsetFetchResponseData.OffsetFetchResponsePartitions();
+        partitions.setMetadata("");
+        partitions.setErrorCode((short) 0);
+        partitions.setPartitionIndex(0);
+        partitions.setCommittedOffset(3);
+
+        OffsetFetchResponseData.OffsetFetchResponseTopics topics = new OffsetFetchResponseData.OffsetFetchResponseTopics();
+        topics.setName("test-topic");
+        topics.setPartitions(List.of(partitions));
+
+        OffsetFetchResponseData.OffsetFetchResponseGroup group = new OffsetFetchResponseData.OffsetFetchResponseGroup();
+        group.setGroupId("my-group");
+        group.setErrorCode((short) 0);
+        group.setTopics(List.of(topics));
+
+        OffsetFetchResponse offsetFetchResponse = new OffsetFetchResponse(List.of(group), request.context().apiVersion());
+
+        System.out.println("Обработан apikey: OFFSET_FETCH");
+        requestChannel.sendResponse(request, offsetFetchResponse, Option.empty());
     }
 
 }
