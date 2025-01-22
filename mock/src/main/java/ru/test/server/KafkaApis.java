@@ -12,12 +12,12 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.message.*;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.LazyDownConversionRecords;
-import org.apache.kafka.common.record.MemoryRecords;
+import org.apache.kafka.common.record.*;
 import org.apache.kafka.common.record.Record;
-import org.apache.kafka.common.record.RecordVersion;
 import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
@@ -35,6 +35,7 @@ public class KafkaApis implements ApiRequestHandler {
 
     private final RequestChannel requestChannel;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    volatile int inc = 0;
 
     public KafkaApis(RequestChannel requestChannel) {
         this.requestChannel = requestChannel;
@@ -56,6 +57,7 @@ public class KafkaApis implements ApiRequestHandler {
                 case SYNC_GROUP -> handleSyncGroupRequest(request);
                 case OFFSET_FETCH -> handleOffsetFetchRequest(request);
                 case FETCH -> handleFetchRequest(request);
+                case OFFSET_COMMIT -> handleOffsetCommitRequest(request);
 
             }
         } catch (Exception e) {
@@ -324,10 +326,24 @@ public class KafkaApis implements ApiRequestHandler {
         partitionData.setLogStartOffset(0);
 //        partitionData.setAbortedTransactions()
 
-        String a = "jello";
-        MemoryRecords memoryRecords = MemoryRecords.readableRecords(ByteBuffer.wrap(a.getBytes(StandardCharsets.UTF_8)));
-        LazyDownConversionRecords lazyDownConversionRecords = new LazyDownConversionRecords(topicIdPartition.topicPartition(), memoryRecords, (byte) 1, 5L, Time.SYSTEM);
-        partitionData.setRecords(lazyDownConversionRecords);
+        MemoryRecords memoryRecords;
+        if (inc < 10) {
+        String a = "jello is my name" + inc;
+        Header[] headers = new Header[0];
+        int size = AbstractRecords.estimateSizeInBytesUpperBound((byte) 2, CompressionType.NONE, null, ByteBuffer.wrap(a.getBytes(StandardCharsets.UTF_8)), headers);
+        ByteBuffer buffer = null;
+        buffer = ByteBuffer.allocate(size);
+        MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, (byte) 2);
+        recordsBuilder.appendWithOffset(inc, Time.SYSTEM.milliseconds(), null, ByteBuffer.wrap(a.getBytes(StandardCharsets.UTF_8)), headers);
+        recordsBuilder.close();
+        memoryRecords = recordsBuilder.build();
+        inc++;
+        } else {
+            memoryRecords = MemoryRecords.readableRecords(ByteBuffer.wrap("".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        //LazyDownConversionRecords lazyDownConversionRecords = new LazyDownConversionRecords(topicIdPartition.topicPartition(), memoryRecords, (byte) 1, 5L, Time.SYSTEM);
+        partitionData.setRecords(memoryRecords);
 //        partitionData.setPreferredReadReplica()
 //        partitionData.setDivergingEpoch()
 
@@ -343,6 +359,31 @@ public class KafkaApis implements ApiRequestHandler {
         FetchResponse fetchResponse1 = FetchResponse.of(Errors.NONE, 0, 0, topicIdPartitionPartitionDataLinkedHashMap, List.<Node>of());
 
         requestChannel.sendResponse(request, fetchResponse1, Option.empty());
+    }
+
+    private MemoryRecordsBuilder recordsBuilder(ByteBuffer buffer, byte maxUsableMagic) {
+        return MemoryRecords.builder(buffer, maxUsableMagic, CompressionType.NONE, TimestampType.CREATE_TIME, 0L);
+    }
+
+    private void handleOffsetCommitRequest(RequestChannel.Request request) {
+
+        OffsetCommitRequest offsetCommitRequest = request.body(ClassTag.apply(OffsetCommitRequest.class), null);
+        OffsetCommitResponseData responseData = new OffsetCommitResponseData();
+        offsetCommitRequest.data().topics().forEach(topic -> {
+            OffsetCommitResponseData.OffsetCommitResponseTopic topicResponse = new OffsetCommitResponseData.OffsetCommitResponseTopic().setName(topic.name());
+            responseData.topics().add(topicResponse);
+
+            topic.partitions().forEach(partition -> {
+                topicResponse.partitions().add(new OffsetCommitResponseData.OffsetCommitResponsePartition()
+                        .setPartitionIndex(partition.partitionIndex())
+                        .setErrorCode(Errors.NONE.code()));
+            });
+
+        });
+
+        OffsetCommitResponse offsetCommitResponse = new OffsetCommitResponse(responseData);
+
+        requestChannel.sendResponse(request, offsetCommitResponse, Option.empty());
     }
 
 }
